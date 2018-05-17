@@ -4,6 +4,9 @@ use std::ops::Index;
 use std::slice;
 use std::vec::Vec;
 
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::plumbing::UnindexedConsumer;
+
 #[derive(Clone, PartialEq)]
 pub struct ArraySequence<T> {
     pub offsets: Vec<usize>,
@@ -79,6 +82,31 @@ impl<T> Index<usize> for ArraySequence<T> {
         let start = unsafe { *self.offsets.get_unchecked(i) };
         let end = unsafe { *self.offsets.get_unchecked(i + 1) };
         &self.data[start..end]
+    }
+}
+
+pub struct ArraySequenceParallelIterator<'data, T: Sync + 'data> {
+    arr: &'data ArraySequence<T>
+}
+
+impl<'data, T: Sync> IntoParallelIterator for &'data ArraySequence<T> {
+    type Item = &'data [T];
+    type Iter = ArraySequenceParallelIterator<'data, T>;
+
+    fn into_par_iter(self) -> Self::Iter {
+        ArraySequenceParallelIterator { arr: &self }
+    }
+}
+
+impl<'data, T: Sync> ParallelIterator for ArraySequenceParallelIterator<'data, T> {
+    type Item = &'data [T];
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+        where C: UnindexedConsumer<Self::Item>
+    {
+        (0..self.arr.len()).into_par_iter()
+            .map(|i| &self.arr[i])
+            .drive_unindexed(consumer)
     }
 }
 
@@ -180,6 +208,7 @@ impl<T: Clone> ArraySequence<T> {
 mod tests {
     use super::*;
     use nalgebra::RowVector3;
+    use rayon::iter::IntoParallelRefIterator;
     pub type Point = RowVector3<f32>;
 
     #[test]
@@ -243,6 +272,22 @@ mod tests {
                     Point::new(0.0, 3.0, 0.0)]);
         assert_eq!(iter.next(), None);
         assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_par_iterator() {
+        let mut arr = ArraySequence::empty();
+        for i in 2..200 {
+            for _ in 0..i {
+                arr.push(Point::new(1.0, 0.0, 0.0));
+            }
+            arr.end_push();
+        }
+
+        let lengths: Vec<_> = arr.par_iter().map(|streamline| streamline.len()).collect();
+        assert_eq!(lengths, (2..200usize).into_iter().collect::<Vec<_>>());
+        assert_eq!(lengths.len(), 198);
+        assert_eq!(arr.par_iter().filter(|streamline| streamline.len() > 100).count(), 99);
     }
 
     #[test]

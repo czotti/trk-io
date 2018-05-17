@@ -2,6 +2,7 @@
 extern crate byteorder;
 #[cfg(feature = "use_nifti")] extern crate nifti;
 extern crate nalgebra;
+extern crate rayon;
 
 pub mod affine;
 mod array_sequence;
